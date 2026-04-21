@@ -1,8 +1,9 @@
-# drpy-node 两类典型站点开发经验总摘要
+# drpy-node 三类典型站点开发经验总摘要
 
-> 基于本轮两个完整案例沉淀：
+> 基于三轮完整案例沉淀：
 > 1. **橘子动漫**：非模板站 + 一级签名接口 + suggest fallback + 二级 async + 原页面嗅探
 > 2. **樱之空动漫**：继承模板站 + 最小覆盖 + `double:false` + `detailUrl` + 搜索页独立结构
+> 3. **247看**：纯 API 驱动 SPA 站 + 全 async 函数 + MeiliSearch 搜索 + m3u8/平台混合播放
 
 本摘要用于快速判断：面对新站时，应先归到哪一类，再使用对应参考。
 
@@ -29,6 +30,16 @@
 
 参考：
 - `references/references-inherited-template-minimal-override-site.md`
+
+### C. 纯 API 驱动 SPA 站
+特征：
+- 模板识别不命中
+- 页面源码 `<body>` 几乎为空（SPA 容器）
+- 所有数据来自 `/api/xxx` 的 JSON 响应
+- 无传统 HTML 列表 DOM
+
+参考：
+- `references/references-pure-api-async-site.md`
 
 ---
 
@@ -66,7 +77,40 @@
 
 ---
 
-## 三、继承模板站的核心方法论
+## 三、纯 API 驱动 SPA 站的核心方法论
+
+对应案例：**247看**
+
+### 关键判断
+页面源码为空不等于站点不可用。所有数据都在 JSON API 里，需要全 async 函数模式。
+
+### 最重要经验
+1. **`this.input` 是 URL 不是响应内容**
+   - 必须自己 `await request(this.input)` 拿响应
+   - 直接 `JSON.parse(this.input)` 会报错
+
+2. **纯数字 vod_id 必须设 `detailUrl`**
+   - 如 `detailUrl: '/api/videos/fyid'`
+   - 否则引擎无法把纯数字映射成详情页 URL
+
+3. **`request` POST 用 `body` 不是 `data`**
+   - `body: JSON.stringify({...})` → JSON body ✅
+   - `data: {...}` → form-data，服务端不认 ❌
+
+4. **搜索 `searchUrl` 必须带 `**`**
+   - 否则 `this.KEY` 为空，搜索无关键词
+   - 外部搜索 API 可能需要 Authorization header
+
+5. **推荐要全量聚合**
+   - 不要只取 `featured`，要聚合所有推荐维度
+   - 按 vod_id 去重
+
+6. **不要重复写同名属性**
+   - 如 `lazy: ''` 和 `lazy: async function()` 只保留一个
+
+---
+
+## 四、继承模板站的核心方法论
 
 对应案例：**樱之空动漫**
 
@@ -105,7 +149,7 @@
 
 ---
 
-## 四、最常见的误判类型
+## 五、最常见的误判类型
 
 ### 误判 1：把非模板站的签名接口当成普通 `json:url`
 后果：
@@ -124,18 +168,25 @@
 - 死抠 title/img/tabs/lists
 - 却没看到根因只是缺 `detailUrl`
 
-### 误判 4：把搜索空直接归因于 `searchUrl` 错误
+### 误判 4：把纯 API 站当成模板站或签名接口站
+后果：
+- 尝试模板继承路线 → 完全无效
+- 尝试抓 HTML DOM → 页面源码为空
+- 浪费大量时间在错误路线上
+
+### 误判 5：把搜索空直接归因于 `searchUrl` 错误
 后果：
 - 忽略搜索页 DOM 与一级完全不同
 - 一直沿用一级结构去写 `搜索`
 
 ---
 
-## 五、实际开发顺序建议
+## 六、实际开发顺序建议
 
 ### 第一步：分站型
 先判断：
-- 非模板站？
+- 纯 API 驱动 SPA 站？（页面源码为空）
+- 非模板签名接口站？
 - 继承模板站？
 
 ### 第二步：先修主链，不先追求漂亮
@@ -157,7 +208,7 @@
 
 ---
 
-## 六、遇到问题时优先查什么
+## 七、遇到问题时优先查什么
 
 ### 首页 `home.list` 空
 先查：
@@ -191,7 +242,7 @@
 
 ---
 
-## 七、建议长期记住的总原则
+## 八、建议长期记住的总原则
 
 ### 原则 1
 **不要把模板名当成经验边界。**
@@ -210,7 +261,7 @@
 
 ---
 
-## 八、对应参考索引
+## 九、对应参考索引
 
 ### 非模板签名接口站
 - `references/references-non-template-signed-api-site.md`
@@ -218,9 +269,51 @@
 ### 继承模板站最小覆盖
 - `references/references-inherited-template-minimal-override-site.md`
 
+### 纯 API 驱动 SPA 站
+- `references/references-pure-api-async-site.md`
+
 ---
 
-## 九、最终一句话总结
+## 十、跨站型通用经验（2026-04-21 沉淀）
+
+以下经验来自纯 API 站（247看）开发，但经提炼后发现对所有站型都适用。
+完整参考：`references/references-async-function-patterns.md`
+
+### 1. `this.input` 在 async 函数中是 URL 不是响应
+- 适用于任何写了 async function 的源
+- 必须 `await request(this.input)` 拿响应
+- 这是 drpy 引擎的通用行为，与站型无关
+
+### 2. 纯数字 vod_id 必须设 `detailUrl`
+- 适用于所有站型（模板站也不例外）
+- 只要一级返回的 vod_id 不是完整详情页 URL
+- 不设 detailUrl → 二级 this.input 无效 → 详情全失败
+
+### 3. `request` POST 用 `body` 不是 `data`
+- 适用于任何需要 POST JSON 的场景
+- `body: JSON.stringify({...})` ✅
+- `data: {...}` → form-data ❌
+
+### 4. `searchUrl` 必须带 `**`
+- 适用于所有搜索源
+- 不带 `**` → `this.KEY` 为空 → 搜索无关键词
+
+### 5. 推荐要完整聚合
+- 适用于所有站型的推荐函数
+- 不要只取一个推荐数据源
+- 按 vod_id 去重
+
+### 6. async 函数用 `this.input` 拿 URL
+- 不要手动拼 `HOST + path`
+- URL 模板已定义的占位符，引擎会自动替换
+
+### 7. 不要写重复同名属性
+- JS 后者覆盖前者
+- 删掉空占位，只保留有逻辑的
+
+---
+
+## 十、最终一句话总结
 
 面对新站时，最重要的不是“会不会写规则”，而是：
 

@@ -1,406 +1,207 @@
 ---
 name: drpy-node-source-create
-description: 适用于 drpy-node 新建 DS 源。用户提到“新建源”“写个 drpy 源”“分析这个站做 DS 源”“创建新规则”“从零开始做源”时使用。专注于站点分析、模板判断、规则生成与初步验证，优先走模板继承与最小覆盖路线，避免一开始就把修复、仓库上传等杂事混在一起。
+description: 适用于 drpy-node 新建 DS 源。用户提到"新建源""写个 drpy 源""分析这个站做 DS 源""创建新规则""从零开始做源"时使用。专注于站点分析、模板判断、规则生成与初步验证，优先走模板继承与最小覆盖路线，避免一开始就把修复、仓库上传等杂事混在一起。
 ---
 
 # drpy-node Source Create
 
-## 调度优先级（新增强规则）
+## 调度优先级
 
 当本地环境已安装本 Skill 时：
-
 - 本 Skill 的工作流优先级 **高于** drpy-node MCP 的通用 prompts
 - MCP 通用 prompt 仅作为无本地 Skill 时的兜底说明
-- 如果用户只提供网址、没有提供源文件名，必须先自行分析站点并推导合理源名，不能机械等待用户补文件名
+- 如果用户只提供网址、没有提供源名，必须先自行分析站点并推导合理源名
 
 ### 强约束
 如果已经命中本 Skill 的使用场景，不要退回到通用 MCP 基础流程充当主流程。
 
 ---
 
-## 与其他 drpy-node skills 的分流关系（新增）
+## 30 秒最短建源路线（执行入口）
 
-### 本 Skill 负责什么
-- 从网址出发分析站点
-- 判断是否命中模板
-- 推导合理源名
-- 生成初版 `rule`
-- 完成首页 / 一级 / 二级 / 搜索 / 播放的初步验证
+### Step 1：定源名
+用户没给源名 → 从站名/标题/域名推导稳定候选。
 
-### 何时切换到 `drpy-node-source-workflow`
-如果任务已经从“新建源”转变成以下任一情况，应交给总控 workflow：
-- 用户开始强调“修源 / 调试 / 评估源是否有效”
-- 已存在源文件，需要系统性排查而非继续从零生成
-- 问题涉及多接口串联（home/category/detail/search/play）
-- 任务包含仓库上传、替换、公开/私密、标签修正等动作
+### Step 2：分站型（三选一）
 
-### 何时切换到 `drpy-node-play-debug`
-如果主要问题已经明显收缩到播放链路，例如：
-- lazy 逻辑不对
-- play.html 被当成直链
-- iframe / m3u8 提取
-- parse:0 / parse:1 / jx:0 / jx:1 判断
+**工具调用：`guess_spider_template(url)`**
 
-则应切换给 `drpy-node-play-debug`，不要在 create skill 里继续扩写播放排障。
+- 命中模板（返回 mx/mxpro/首图 等） → 走路线 A
+- 不命中 + 页面源码为空（SPA 容器） → 走路线 C
+- 不命中 + 有 HTML 但数据由接口驱动 → 走路线 B
 
-### 强制停手检查点（新增）
-出现以下任一情况时，必须停止继续在 create skill 内扩写，并明确切换到其他 skill：
-- 任务已从“新建源”转为“系统性修源 / 评估源是否有效 / 决定是否上传” → 交给 `drpy-node-source-workflow`
-- 主要问题已明显收缩到 lazy / 直链 / iframe / m3u8 / parse/jx 判断 → 交给 `drpy-node-play-debug`
+**辅助判断：`analyze_website_structure(url)` 抓取精简 DOM 结构**
+**辅助判断：`fetch_spider_url(url)` 查看原始响应和 headers**
 
-**禁止**在这些前提已出现时，继续把 create skill 当成总控或播放专项 skill 使用。
+### Step 3：保住最小可用链路
 
-## 30 秒最短建源路线（新增）
+**工具调用顺序：**
+```
+1. get_spider_template()       → 获取标准模板
+2. write_file()                → 保存到 spider/js/[源名].js
+3. check_syntax(path)          → 语法检查
+4. validate_spider(path)       → 结构检查
+5. test_spider_interface(home) → 测试首页
+6. test_spider_interface(category, class_id) → 测试一级
+7. test_spider_interface(detail, ids)        → 测试二级
+8. test_spider_interface(search, keyword)    → 测试搜索
+9. test_spider_interface(play, play_url)     → 测试播放
+10. evaluate_spider_source()   → 全流程评估（可选）
+```
 
-当用户说“新建源 / 写个 drpy 源 / 分析这个站做 DS 源”时，优先按下面顺序起手：
+**单接口调试工具：**
+- `debug_spider_rule(rule, mode)` → 测试 CSS/Regex 选择器
+- `fetch_spider_url(url)` → 测试 API 连通性和响应
+- `extract_website_filter(url)` → 提取分类筛选条件
 
-1. **先定源名**
-   - 用户没给源名 → 先从站名 / 标题 / 域名推导稳定候选
-2. **先分站型**
-   - 命中模板站 → 优先模板继承 + 最小覆盖
-   - 非模板异步站 → 先判断是否签名接口驱动
-3. **先保住最小可用链路**
-   - 首页
-   - 一级
-   - 二级
-   - 搜索
-   - 播放
-4. **最后才决定是否进入更深排障**
-   - 如果已经变成系统性修源 / 评估 / 上传问题 → 交给 workflow
-   - 如果主要卡在播放链 → 交给 play-debug
+### Step 4：决定是否切换
+- 已变成系统性修源/评估/上传 → 交给 `drpy-node-source-workflow`
+- 主要卡在播放链 → 交给 `drpy-node-play-debug`
 
-### 强提醒
-**不要一上来就大面积手写 `一级/搜索/二级`。**
-先分站型、先判断模板/签名接口、先保住最小可用，再决定是否需要最小覆盖。
+### 强约束
+**不要一上来就大面积手写 一级/搜索/二级。先分站型，先判断模板/签名接口，先保住最小可用。**
 
 ---
 
+## 路线 A：继承模板站
+
+当 `guess_spider_template` 命中内置模板时走此路线。
+
+### 核心原则：模板内置优先，最小覆盖
+能走模板内置就不要急着手写覆盖。很多问题是继承残留导致的，不是模板本身失效。
+
+### 模板继承核查清单（必须完成后再写规则）
+1. `class_parse` 是否残留并覆盖 `class_name/class_url`？→ 显式补 `class_parse: ''`
+2. `double` 是否导致首页推荐为空？→ 单层推荐优先 `double: false`
+3. `url` 是否是真实分类模板？→ 必须验证真实分类页和翻页结构
+4. `searchUrl` 是否是真实搜索模板？
+5. 首页推荐节点是否真实存在？
+6. 删除手写 一级/搜索，优先验证模板内置规则
+
+### 强禁止
+未完成核查清单前，**禁止**一上来就大面积手写 推荐/一级/搜索/二级。
+
+### 常见排障
+| 症状 | 优先检查 |
+|---|---|
+| 首页推荐空 | `double` 是否为 true，推荐节点是否真实存在 |
+| detail 不通 | `detailUrl` 是否缺失（纯数字 vod_id 必须设 detailUrl） |
+| 搜索空 | 搜索页 DOM 是否独立于一级（不要默认 `搜索: '*'`） |
+| `*` 含义不清 | 先读 `references/references-template-summary.md`，`*` 继承一级 |
+
+### 参考资料
+- `references/references-inherited-template-minimal-override-site.md`
+
 ---
 
-## 新增强规则：非模板站也要先判断“一级是否由签名接口驱动”
+## 路线 B：非模板签名接口站
 
-当站点不是内置模板，且分类页列表明显由前端 JS 异步渲染时，必须优先参考：
-- `references/references-non-template-signed-api-site.md`
+当站点不是内置模板，且分类页由前端带签名的接口驱动时走此路线。
 
-### 强提醒
-不要看到页面上有 `data-api` 就直接假设这是可裸 GET 的 JSON 接口。
-必须先确认：
+### 先判断一级是否由签名接口驱动
+不要看到 `data-api` 就直接假设这是可裸 GET 的 JSON 接口。必须确认：
 1. 浏览器真实请求是 GET 还是 POST
 2. 是否带 `time/key/token` 等签名参数
 3. 是否需要 Ajax 请求头
 
 ### 已验证经验
-本类站点可能出现：
-- 裸 GET 只返回一段无效文本
-- 浏览器真实请求却是带签名的 POST
+裸 GET 可能只返回无效文本，浏览器真实请求却是带签名的 POST。
+
+### 参考资料
+- `references/references-non-template-signed-api-site.md`
 
 ---
 
-## 新增强规则：继承模板站首页推荐空时，优先检查 `double`
+## 路线 C：纯 API 驱动 SPA 站
 
-当站点已命中内置模板，且通过模板继承生成最终 rule，但首页推荐节点已确认存在而 `home.list` 仍为空时，必须优先参考：
-- `references/references-inherited-template-minimal-override-site.md`
+当页面源码 `<body>` 几乎为空，所有数据来自 `/api/xxx` JSON 响应时走此路线。
 
-### 强提醒
-如果手写 `推荐` 已经直接落到最终卡片层，例如：
-```js
-.cbox_list&&ul&&li
-```
-而首页仍为空，不要立刻怀疑字段槽位全部错误，优先检查：
+### 立即参考
+- `references/references-pure-api-async-site.md`
 
-```js
-double: true
-```
+### 核心：全 async 函数模式
+不要尝试模板继承，不要写规则字符串，直接用全 async 函数。
 
-对于单层推荐结构，应优先尝试：
-
-```js
-double: false
-```
+### 必背要点
+1. `this.input` 是渲染后的 URL 字符串 → 必须 `await request(this.input)` 拿响应
+2. 纯数字 vod_id 必须设 `detailUrl` → 如 `detailUrl: '/api/videos/fyid'`
+3. `request` POST 用 `body`（JSON.stringify）不是 `data`
+4. `searchUrl` 必须带 `**` → 否则 `this.KEY` 为空
+5. 外部 API 可能要 Authorization → 从浏览器抓包
+6. 推荐数据要全量聚合 → 别只取 featured
 
 ---
 
-在处理搜索前，必须先阅读：
-- `references/references-search-strategies.md`
-- `references/references-old-encoding-search-site.md`
+## 通用规则（跨所有站型）
 
-尤其要先判断当前站点属于：
+以下规则对模板站/签名接口站/纯 API 站都适用，只要源中有 async function 就必须遵守。
+
+### 必读参考
+- `references/references-async-function-patterns.md`（async 函数通用模式与陷阱）
+
+### 7 条必背规则
+1. **`this.input` 是 URL 不是响应** → 必须 `await request(this.input)`
+2. **纯数字 vod_id 必须设 `detailUrl`** → 引擎才能拼出详情 URL
+3. **POST 用 `body` 不是 `data`** → `body: JSON.stringify({...})`
+4. **`searchUrl` 必须带 `**`** → 否则 `this.KEY` 为空
+5. **推荐要完整聚合** → 全量聚合 + 按 vod_id 去重
+6. **async 函数用 `this.input` 拿 URL** → 不要手动拼 `HOST + path`
+7. **不写重复同名属性** → 删掉空占位，只保留有逻辑的
+
+### 其他通用经验
+- 一级 async 优先用 `this.MY_CATE` / `this.MY_PAGE`，不要拆 URL
+- `request` / `post` 是全局函数，不在 `this` 上
+- detail 测试必须用一级真实返回的 `vod_id`
+- 评估搜索时不要机械用默认词"斗罗大陆"，要换高频宽匹配词
+- 区分"规则不通"和"评估器没串起来"——单接口通但评估不通是串联问题
+
+### 搜索策略（必须先判断）
+处理搜索前，必须先读 `references/references-old-encoding-search-site.md`，判断属于：
 1. 原生搜索接口
 2. suggest / 联想搜索 fallback
 3. RSS fallback
 
-### 强约束
-不要在没有完成这一步判断前，就直接拍脑袋写 `searchUrl`，也不要随手决定使用 suggest / RSS。
+### parser 语法边界
+- `||` 优先用于同一 selector 下的属性 fallback（如 `img&&data-original||src`）
+- 不要生成 `img&&data-original||img&&src` 这种跨 selector fallback（超出 parser 稳定边界）
+- 优先保守、可验证的规则写法
 
 ---
 
-### 新增经验：评估搜索时不要机械沿用默认词
-在新建源或初步验证阶段，如果 `evaluate_spider_source` 仅搜索失败，而首页 / 一级 / 二级 / 播放已正常，不要立刻回头重写搜索规则。
+## 二级字典规范
 
-应优先判断是不是评估词不适配当前站点。`evaluate_spider_source` 的搜索词由 `keyword` 参数决定；若不传，默认词常为 `斗罗大陆`，这并不适用于所有垂类站。
+完整参考：`references/references-detail-dict-and-multiep.md`
 
-#### 正确动作
-优先主动传入更高频、更宽匹配、且更贴合站型的词进行验证，例如：
-- 通用宽匹配词：`我的`
-- 动漫站高频词：`异世界`、`转生`
-- 或直接取首页 / 一级真实 `vod_name` 的稳定片段
+### 字段槽位语义
+| 字段 | 语义 |
+|---|---|
+| `title` | 片名;类型 |
+| `img` | 封面图规则 |
+| `desc` | 备注;年份;地区;演员;导演（5段固定槽位） |
+| `content` | 简介规则 |
+| `tabs` | 线路节点选择器 |
+| `tab_text` | 线路名提取规则 |
+| `lists` | 当前线路选集列表选择器（支持 #id/#idv） |
+| `list_text` | 每集标题（默认 body&&Text） |
+| `list_url` | 每集链接（默认 a&&href） |
 
-#### 判定原则
-如果换词后搜索恢复正常，应优先判定为评估参数问题，而不是直接把责任归到 `searchUrl` / `搜索` 规则上。
-
----
-
-## 新增强规则：看到 `*` 先按“对齐一级”理解，再决定要不要覆盖
-
-当模板字段中出现：
-- `搜索: '*'`
-- `推荐: '*'`
-- `推荐: '.xxx;*;*;*;*;*'`
-- 其他含多个 `*` 的模板摘要写法
-
-必须先阅读：
-- `references/references-template-summary.md`
-
-### 强约束
-不要在没有理解 `*` 的源码级行为前，就把它机械改写成完整手写规则。
-
-### 当前应采用的理解
-- 单个 `*`：整体继承一级
-- 多个 `*`：按分号位置逐位继承一级对应槽位
+### 排障要点（详见 reference）
+- 页面多集但 detail 只吐 1 集 → 先查 `lists` 容器层级（从 ul 下沉到 li）
+- detail 测试必须用一级真实返回的 `vod_id`，禁止主观简化
+- 先让 detail 真通，再进入播放链排障
+- 先保证 标题/描述/详情/图片/线路/列表 可用（最小化原则）
 
 ---
 
-## 新增重点：模板继承核查清单（强制执行）
+## 与其他 Skill 的分流
 
-当站点明显命中模板时，不要一上来就手写 `一级/搜索/推荐/二级`。必须先完成这份核查清单。
+### 何时切换到 workflow
+- 已变成系统性修源/评估/上传
+- 源文件已存在，需要排查而非从零生成
+- 任务包含仓库上传、标签修正
 
-### 核查顺序
-1. `class_parse` 是否残留并覆盖 `class_name/class_url`
-2. `double` 是否导致首页推荐为空
-3. `url` 是否是真实分类模板，而不是首页导航表层链接
-4. `searchUrl` 是否是真实搜索模板
-5. 首页推荐节点是否真实存在
-6. 分类页第 1 / 2 页翻页结构是否真实匹配 `fyclass/fypage`
-7. 在必要时先删除手写 `一级/搜索`，优先验证模板内置规则
+### 何时切换到 play-debug
+- 主要卡在 lazy/直链/iframe/m3u8/parse 判断
 
----
-
-## 一条强规则：模板内置优先
-
-### 禁止事项
-当模板站未完成模板继承核查前，**禁止**一上来就大面积手写：
-- `推荐`
-- `一级`
-- `搜索`
-- `二级`
-
-### 正确顺序
-优先顺序应为：
-1. 先修模板继承残留项
-2. 先确认真实 `url/searchUrl`
-3. 先验证模板内置链路
-4. 只有模板内置规则确认不通，才允许最小覆盖
-
----
-
-## 新增强规则：尊重 parser 真实语法边界
-
-### `||` 的推荐用法
-`||` 应优先用于**同一 selector 下的属性 fallback**，例如：
-
-```js
-img&&data-original||src
-a&&data-original||src
-```
-
-### 不推荐写法
-不要默认生成这种“完整双规则 fallback”：
-
-```js
-img&&data-original||img&&src
-```
-
-除非已经明确验证当前 parser / engine 显式支持。
-
-### 原因
-这类写法看起来合理，但可能超出当前 `htmlParser.js` 的稳定支持边界，导致：
-- category 接口报错
-- debug 与引擎行为看似不一致
-- 自动评估串联失败
-
-### 处理原则
-在生成字符串型规则时：
-1. 优先生成 parser 已明确支持的规范写法
-2. 不要因为“语义上看起来合理”就假定引擎已支持
-3. 如果对 parser 边界没有把握，优先写更保守、可验证的规则
-
----
-
-### 新增经验：detail 不通先查 `detailUrl`
-
-如果继承模板站的二级字典看起来合理，但 detail 测试传纯数字 ID 时仍返回模板兜底值，应优先检查：
-
-```js
-detailUrl
-```
-
-很多模板站 detail 真正失败的根因不是二级字典错误，而是引擎无法把纯数字 ID 映射成详情页 URL。
-
-### 新增经验：搜索为空时优先判断搜索页是否独立于一级 DOM
-搜索结果为空时，要优先确认搜索页是否使用独立 DOM（如 `.searchlist_item`），不要默认 `搜索: '*'` 或一级列表结构可以直接复用。
-
-### 新增经验：一级 async 优先用引擎上下文变量，不要先拆 URL
-
-当 `一级: async function () {}` 需要处理分类和页码时，优先直接使用：
-- `this.MY_CATE`
-- `this.MY_PAGE`
-
-不要先从 `input` 或 `MY_URL` 做正则拆参，除非引擎上下文确实未提供。
-
-### 新增经验：`request/post` 是全局函数，不在 `this` 上
-在 drpy async function 中：
-- `request` / `post` 应直接全局调用
-- 不要写成 `let { request } = this`
-
----
-
-### 5. 当页面真实有多集但 `vod_play_url` 只吐出 1 集时，先检查 `lists` 容器层级
-不要看到详情页真实能抓到多个 `<a>`，就立刻否定二级字典方式或切到 async。应优先检查：
-- `lists` 是否落在了适合引擎逐项消费的容器层级
-- `#id` 是否仅用于线路容器替换，而不是被误理解为控制单线路集数
-
-#### 已验证案例：咕咕番
-对于这类“一级异步接口 + 详情页直出资源列表”的动漫站，页面上：
-- `.anthology-list-box:eq(0) .anthology-list-play` 可抓到 1 个 `ul`
-- `.anthology-list-box:eq(0) .anthology-list-play a` 可抓到 2 个 `a`
-- `.anthology-list-box:eq(0) .anthology-list-play li` 可抓到 2 个 `li`
-
-但在 drpy 引擎的二级字典模式下，要稳定吐出多集，最终应优先尝试：
-```js
-lists: '.anthology-list-box:eq(#id) .anthology-list-play li',
-list_text: 'a&&Text',
-list_url: 'a&&href'
-```
-
-#### 判定原则
-- `#id` 的主要作用是“线路容器替换定位”
-- 真正影响该站多集展开成功与否的关键，往往是 `lists` 落在 `li` 项层，而不是 `ul` 容器层
-- 因此：**先调 `lists` 容器层级，再考虑放弃字典或切 async**
-
----
-
-### 1. 二级字典字段不是随意拼接，`;` 有固定槽位语义
-默认应按 drpy-node 引擎契约理解：
-
-- `title: '片名;类型'`
-- `img: '封面图规则'`
-- `desc: '备注;年份;地区;演员;导演'`
-- `content: '简介规则'`
-- `tabs: '线路节点选择器'`
-- `tab_text: '线路名提取规则'`
-- `lists: '当前线路的选集列表选择器，支持 #id / #idv'`
-- `list_text: '每一集标题提取规则'`（默认 `body&&Text`）
-- `list_url: '每一集链接提取规则'`（默认 `a&&href`）
-
-### 2. 调试 `detail` 时，必须使用一级真实返回的 `vod_id`
-禁止在 detail 测试时主观把 `vod_id` 简化成纯数字 id、短 id 或手工猜测的详情 id。
-
-必须遵守：
-1. 先跑 `category`
-2. 复制一级真实返回的 `vod_id`
-3. 用这个 `vod_id` 去测 `detail`
-
-### 3. 二级默认遵循最小化原则
-默认优先保证以下信息可用即可：
-- 标题
-- 描述/备注
-- 详情内容
-- 图片
-- 线路
-- 列表
-
-只有在用户明确要求，或先征询用户是否需要补全时，才继续完善：
-- 年份
-- 地区
-- 演员
-- 导演
-
-### 4. 先让 detail 真通，再进入播放链排障
-如果 `detail` 还没有稳定产出：
-- `vod_play_from`
-- `vod_play_url`
-
-就不要急着把问题归因为 lazy / play 链路。应先回头检查：
-- 二级字典契约是否写对
-- `tabs/lists/tab_text/list_text/list_url` 是否匹配
-- detail 测试用的 `vod_id` 是否来自一级真实返回
-
-### 1. 模板残留 `class_parse` 会压住 `class_name/class_url`
-如果继承模板后准备使用：
-```js
-class_name: '电影&电视剧',
-class_url: '1&2'
-```
-则必须检查模板是否自带 `class_parse`。
-
-若模板残留的 `class_parse` 仍在生效，可能导致首页 `class` 为空，自动评估拿不到分类 ID。
-
-#### 处理原则
-优先显式补：
-```js
-class_parse: ''
-```
-让 `class_name/class_url` 真正接管。
-
----
-
-### 2. 首页推荐为空时，要检查 `double`
-如果首页真实存在推荐卡片节点，但 `home.list` 仍为空，要考虑模板默认推荐可能按双层定位处理。
-
-对于实际是单层推荐结构的站点，应优先尝试：
-```js
-double: false
-```
-
-#### 处理原则
-- 真实推荐是单层 → 优先 `double:false`
-- 真实推荐是分组+分组内卡片 → 再考虑双层
-
----
-
-### 3. 分类 `url` 不能只看首页导航表面链接
-不要看到首页导航是 `/list/1.html`，就直接推断 `url` 模板是 `/list/fyclass_fypage.html`。
-
-必须验证：
-- 分类页真实地址
-- 翻页第 2 页地址
-- `fyclass` 与 `fypage` 的真实落位
-
-#### 已验证经验
-有些站首页导航是 `/list/1.html`，但真正可用的分类模板可能是：
-```js
-/top/fyclass--------fypage---.html
-```
-另一些站则可能是：
-```js
-/index.php/vod/type/id/fyclass/page/fypage.html
-```
-
-所以：
-**分类 `url` 必须通过真实网页和翻页结构验证，不可只靠表层导航推断。**
-
----
-
-### 4. 要区分“规则不通”与“自动评估串联没接上”
-如果 `evaluate_spider_source` 结果很差，不要立刻断言整份源不可用。
-
-应优先用：
-- `test_spider_interface(category)`
-- `test_spider_interface(detail)`
-- `test_spider_interface(play)`
-
-分别验证单接口是否真实可用。
-
-#### 处理原则
-- 如果单接口通，但自动评估不通 → 优先怀疑自动串联条件（如首页 class、模板残留覆盖、`double`、错误分类 URL）
-- 不要把“评估器没串起来”误判成“规则完全不通”
+### 强制停手检查点
+出现以上任一情况时，必须停止在 create skill 内扩写，明确切换。

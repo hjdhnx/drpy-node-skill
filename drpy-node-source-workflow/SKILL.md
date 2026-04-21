@@ -1,312 +1,203 @@
 ---
 name: drpy-node-source-workflow
-description: 适用于 drpy-node 源开发、修复、调试、测试与仓库上传的总控工作流 Skill。用户提到“修源”“调试 drpy 源”“测试某个源”“详情为空”“播放不通”“搜索异常”“上传到仓库”“修复 P0 源”“评估源可用性”“DS源开发”“lazy 解析”“上传 ds 源”时使用。优先用于 drpy-node 项目中的 DS 源，负责先评估、再分流到对应子 skill（播放调试/仓库上传/新建源），最后做结果汇总与上传决策。
+description: 适用于 drpy-node 源开发、修复、调试、测试与仓库上传的总控工作流 Skill。用户提到"修源""调试 drpy 源""测试某个源""详情为空""播放不通""搜索异常""上传到仓库""修复 P0 源""评估源可用性""DS源开发""lazy 解析""上传 ds 源"时使用。优先用于 drpy-node 项目中的 DS 源，负责先评估、再分流到对应子 skill（播放调试/仓库上传/新建源），最后做结果汇总与上传决策。
 ---
 
 # drpy-node Source Workflow
 
-## 调度优先级（新增强规则）
+## 调度优先级
 
-当本地环境已安装本 Skill 或相关 drpy-node 子 Skill 时：
-
+当本地环境已安装本 Skill 时：
 - 本地 Skill 优先级 **高于** drpy-node MCP 的通用 prompts
-- 通用 MCP prompt 只作为无本地 Skill 时的兜底流程
-- 当用户只给网址、不给文件名时，总控层应主动分析站点并推导源名，不应退回通用流程等待用户补参数
+- 当用户只给网址、不给文件名时，总控层应主动分析站点并推导源名
 
 ### 强约束
 如果本地 Skill 已覆盖场景，不允许让 MCP 通用 prompt 抢占主流程。
 
 ---
 
-## 总控闭环（新增）
+## 总控闭环（5 步）
 
-本 Skill 的默认主流程应尽量收敛为：
+### Step 1：识别输入类型
+- 仅有网址 → 先分析站点并推导源名
+- 已有源名/源文件 → 进入修复与评估流程
 
-1. **识别输入类型**
-   - 仅有网址 → 先分析站点并推导源名
-   - 已有源名/源文件 → 进入修复与评估流程
-2. **先评估现状**
-   - `read_file`
-   - `check_syntax`
-   - `validate_spider`
-   - `get_resolved_rule`（模板站）
-   - `evaluate_spider_source`
-3. **判断失败类型**
-   - 规则本身不通
-   - 自动串联没接上
-   - 主要卡在播放链
-4. **分流**
-   - 新建源 → `drpy-node-source-create`
-   - 播放链问题 → `drpy-node-play-debug`
-   - 上传仓库 → `drpy-node-repo-upload`
-5. **收束**
-   - 重新评估
-   - 给出是否有效结论
-   - 决定是否上传 / 替换 / 回滚
+### Step 2：评估现状
+1. `read_file` 读取源文件
+2. `check_syntax` + `validate_spider` 基础校验
+3. `get_resolved_rule`（模板站适用）
+4. `evaluate_spider_source` 全流程评估
+
+### Step 3：判断失败类型
+
+**诊断工具调用：**
+```bash
+# 逐接口拆分验证
+test_spider_interface(source_name, "category", class_id)  # 一级
+test_spider_interface(source_name, "detail", ids)          # 二级
+test_spider_interface(source_name, "search", keyword)      # 搜索
+test_spider_interface(source_name, "play", play_url)       # 播放
+```
+
+- **A. 规则本身不通** → 单接口 test 也失败
+- **B. 评估器没串起来** → 单接口通但 evaluate 不通
+- **C. 主要卡在播放链** → detail 正常但 play 异常
+
+### Step 4：分流
+| 问题类型 | 分流目标 |
+|---|---|
+| 新建源 | `drpy-node-source-create` |
+| 播放链问题 | `drpy-node-play-debug` |
+| 上传仓库 | `drpy-node-repo-upload` |
+| 站型判断不清 | 按 Step 3 重新诊断 |
+
+### Step 5：收束
+- `evaluate_spider_source` 重新评估
+- 给出是否有效结论
+- 决定是否上传/替换/回滚（需要上传时 → `house_file(action='upload')`)
 
 ### 强约束
-不要把 workflow 变成“所有事都自己做完”。它的价值在于：
-- 先评估
-- 再分流
-- 最后收束
+不要把 workflow 变成"所有事都自己做完"。它的价值在于：先评估 → 再分流 → 最后收束。
 
 ---
 
-## 新增强规则：搜索处理必须先看 reference
+## 通用排查 Checklist（优先执行，跨所有站型）
 
-在处理搜索前，必须先阅读：
-- `references/references-search-strategies.md`
-- `../drpy-node-source-create/references/references-old-encoding-search-site.md`
-- `../drpy-node-source-create/references/references-inherited-template-minimal-override-site.md`（用于所有继承模板站的最小覆盖排障，而不只限于某个模板个案）
+以下排查项对模板站/签名接口站/纯 API 站都适用。只要源中有 async function，就必须先过这个清单。
 
-尤其要先判断当前站点属于：
+完整参考：`../drpy-node-source-create/references/references-async-function-patterns.md`
+
+| 优先级 | 检查项 | 症状 |
+|---|---|---|
+| **P0** | `this.input` 是 URL 不是响应 | `JSON.parse(this.input)` 报错含 URL |
+| **P0** | `detailUrl` 是否设置 | 二级全部为空 |
+| **P0** | POST 用 `body` 不是 `data` | 搜索/一级 POST 请求服务端不认 |
+| **P0** | `searchUrl` 带 `**` | `this.KEY` 为空 |
+| **P1** | 推荐完整聚合 | 推荐只有几条 |
+| **P1** | 不手动拼 URL | 代码冗余且易出错 |
+| **P2** | 不写重复属性 | 维护混淆 |
+
+### 强约束
+不要因为"这是模板站"就跳过这些检查。只要源中有 async function，就必须先过通用清单。
+
+---
+
+## 模板站排查路线
+
+当站点命中内置模板但评估不顺时，严禁直接大面积手写覆盖。
+
+### 排查顺序（按此顺序逐项检查）
+1. 查模板默认定义 → `references/references-template-summary.md`
+2. `class_parse` 是否残留覆盖？→ 补 `class_parse: ''`
+3. `double` 是否导致推荐空？→ 补 `double: false`
+4. 真实分类 `url` → 必须验证真实分类页和翻页
+5. 真实搜索 `searchUrl`
+6. 删除手写 一级/搜索，优先验证模板内置规则
+7. `test_spider_interface` 拆开验证各接口
+8. 最后才允许最小覆盖
+
+### 强禁止
+未完成 1~7 之前，禁止一口气重写 推荐/一级/搜索/二级。
+
+### 关键原则
+**不要把模板问题、分类 URL 问题、评估器串联问题，误当成单纯的一级选择器问题。**
+
+---
+
+## 纯 API 站排查路线
+
+当页面源码为空、所有数据走 JSON API 时，走此路线（不套用模板站 checklist）。
+
+完整参考：`../drpy-node-source-create/references/references-pure-api-async-site.md`
+
+### 排查顺序
+1. `this.input` 是否被误当响应 → 必须 `await request(this.input)`
+2. `detailUrl` 是否设置 → 纯数字 vod_id 必须设
+3. 搜索 `searchUrl` 是否带 `**` → 否则 KEY 为空
+4. POST 是否用了 `body` 而非 `data`
+5. 外部 API 是否需要 Authorization
+6. 推荐是否完整聚合
+
+### 强约束
+纯 API 站排障路线与模板站完全不同，不要混用模板站的 checklist。
+
+---
+
+## `*` 模板字段理解
+
+当模板字段中出现 `搜索: '*'` 或含多个 `*` 的摘要写法时，必须先读：
+- `references/references-template-summary.md`
+
+### 当前理解
+- 单个 `*`：整体继承一级
+- 多个 `*`：按分号位置逐位继承一级对应槽位
+
+### 强约束
+不要在没理解 `*` 的源码级行为前，就机械改写成完整手写规则。
+
+---
+
+## 搜索排查
+
+### 搜索词适配（高频误判点）
+当自动评估仅搜索失败，其他接口正常时：
+1. 不要立刻判定"搜索规则失效"
+2. 不要急着改 `searchUrl`
+3. 应先换高频宽匹配词验证（通用词 `我的`，动漫站 `异世界`，或取一级 vod_name 片段）
+4. 换词后正常 → 判定为评估参数问题
+
+### 搜索策略参考
+处理搜索前必须先判断属于：
 1. 原生搜索接口
 2. suggest / 联想搜索 fallback
 3. RSS fallback
 
-### 强约束
-不要在没有完成这一步判断前，就直接拍脑袋写 `searchUrl` 或随手决定用 RSS / suggest。
+参考：`references/references-search-strategies.md`
 
 ---
 
-## 新增强规则：看到 `*` 先按“对齐一级”理解，再决定要不要覆盖
+## 二级 detail 规范
 
-当模板字段中出现：
-- `搜索: '*'`
-- `推荐: '*'`
-- `推荐: '.xxx;*;*;*;*;*'`
-- 其他含多个 `*` 的模板摘要写法
+完整参考：`../drpy-node-source-create/references/references-detail-dict-and-multiep.md`
 
-必须先阅读：
-- `references/references-template-summary.md`
+### 测试输入
+- detail 测试**必须**使用一级真实返回的 `vod_id`
+- 禁止主观简化为纯数字 id 或手推 id
+- 正确顺序：先跑 category → 取真实 vod_id → 再测 detail
 
-### 强约束
-不要在没有理解 `*` 的源码级行为前，就把它机械改写成完整手写规则。
+### 字典槽位
+- `desc` 五段有固定语义：备注;年份;地区;演员;导演
 
-### 当前应采用的理解
-- 单个 `*`：整体继承一级
-- 多个 `*`：按分号位置逐位继承一级对应槽位
+### 多集只吐 1 集
+先查 `lists` 容器层级（从 ul 下沉到 li），用 `debug_spider_rule(pdfa)` 验证各层项数。不要直接切 async。
 
----
-
-## 新增强规则：模板继承不是黑箱
-
-当模板站“看起来命中模板，但自动评估始终不顺”时，严禁直接大面积手写覆盖。必须按以下顺序排障：
-
-1. 查模板默认定义（参考 `references-template-summary.md`）
-2. `class_parse`
-3. `double`
-4. 真实分类 `url`
-5. 真实搜索 `searchUrl`
-6. 删除手写 `一级/搜索`，优先验证模板内置规则
-7. `test_spider_interface` 拆开验证 category/detail/play
-8. 最后才允许最小覆盖
-
-### 强约束
-在完成以上 1~7 之前，禁止一口气重写：
-- `推荐`
-- `一级`
-- `搜索`
-- `二级`
+### 最小化原则
+先保证 标题/描述/详情/图片/线路/列表，不强补 年份/地区/演员/导演。
 
 ---
 
-## 新增强规则：先判断是不是规则越界写法，不要先甩锅引擎
+## 评估器失败分流
 
-当某条规则“看起来合理，但接口里异常”时，先按以下顺序判断：
+| 类型 | 表现 | 处理 |
+|---|---|---|
+| **A. 规则不通** | 单接口 test 也失败 | 修复规则本身 |
+| **B. 评估没串起来** | 单接口通，评估不通 | 检查首页 class / class_parse / double / url / searchUrl |
 
-1. 这条写法是否真的在模板/现有规范里被当作标准写法使用？
-2. 这条写法是否超出了 parser 已明确支持的边界？
-3. 是不是应该先修规则写法与 MCP/skill 约束，而不是直接要求引擎兼容？
-
-### 一个已验证案例
-类似：
-```js
-img&&data-original||img&&src
-```
-
-看起来像“合理 fallback”，但如果模板/规范并未把它当标准写法，就不应先要求引擎背锅。
-
-### 正确态度
-**先尊重引擎设定，再要求更宽容的兼容。**
-
----
-
-## P1：模板内置优先，不要过早覆盖
-
-### 一个关键原则
-**能走模板内置，就不要急着手写覆盖。**
-
-尤其是：
-- 一级不通时，不要第一反应就手写 `一级`
-- 搜索不通时，不要第一反应就手写 `搜索`
-- 应优先检查是不是：
-  - `class_parse` 残留
-  - `double` 错误
-  - `url/searchUrl` 误判
-  - 手写覆盖反而打乱模板链
-
----
-
-## P2：评估器失败后的标准分流
-
-如果 `evaluate_spider_source` 分数很低，总控层必须先判断是哪一类失败：
-
-### 新增经验：评估搜索词不要机械使用默认 `斗罗大陆`
-`evaluate_spider_source` 的搜索测试词由调用参数 `keyword` 决定；如果不传，默认常为 `斗罗大陆`。这并不适用于所有垂类站，尤其是动漫站、影视细分站、小众站。
-
-#### 强约束
-当自动评估仅搜索失败，而首页 / 一级 / 二级 / 播放均正常时：
-1. 不要立刻判定为“搜索规则失效”
-2. 不要急着改 `searchUrl` / `搜索` 规则
-3. 应优先判断是否只是评估词不适配当前站点
-
-#### 正确动作
-优先重新调用 `evaluate_spider_source` 或 `test_spider_interface(search)`，主动传入更高频、更宽匹配、更适合当前站型的搜索词，例如：
-- 通用宽匹配词：`我的`
-- 动漫站常用词：`异世界`、`转生`
-- 必要时也可直接取首页 / 一级真实 `vod_name` 的稳定片段做验证
-
-#### 判定原则
-如果换词后搜索正常，应优先判定为：
-- 评估参数问题
-- 默认搜索词不适配
-
-而不是：
-- 源本身搜索规则坏了
-
-### 类型 A：规则本身不通
-表现：
-- 单独 `test_spider_interface(category/detail/play)` 也失败
-- 真实网页节点或 URL 本身错误
-
-### 类型 B：自动评估没串起来
-表现：
-- 单接口测试可用
-- 但 `evaluate_spider_source` 仍跳过或串联失败
-
-#### 对 B 类必须优先检查
+### B 类优先检查
 - 首页 `class` 是否为空
 - `class_parse` 是否覆盖
 - `double` 是否导致推荐为空
 - 分类 `url` / 搜索 `searchUrl` 是否真实
-- 是否因为手写 `一级/搜索` 反而扰乱模板内置链路
+- 手写 一级/搜索 是否反而扰乱模板内置链路
 
 ---
 
-## 新增硬规则：detail 测试输入与二级字典契约
+## parser 语法边界
 
-### 1. detail 测试必须使用一级真实返回的 `vod_id`
-总控层在验证 `detail` 时，禁止把 `vod_id` 主观简化成：
-- 纯数字 id
-- 手推详情 id
-- 仅分类页中看起来像 id 的片段
+当规则"看起来合理但接口异常"时：
+1. 是否超出 parser 已明确支持的边界？
+2. 应先修规则写法，而非要求引擎兼容
+3. `||` 优先用于同一 selector 属性 fallback（`img&&data-original||src`）
+4. 不要生成跨 selector fallback（`img&&data-original||img&&src`）
 
-正确顺序必须是：
-1. 先跑 `test_spider_interface(category)`
-2. 从一级真实结果中提取 `vod_id`
-3. 用这个真实 `vod_id` 跑 `test_spider_interface(detail)`
-
-### 2. 二级字典的 `desc` 五段有固定槽位语义
-当站点适合字典二级时，`desc` 默认应按以下固定位置理解：
-- 第1段 → `vod_remarks`
-- 第2段 → `vod_year`
-- 第3段 → `vod_area`
-- 第4段 → `vod_actor`
-- 第5段 → `vod_director`
-
-不要把 `desc` 当成任意拼接信息串。
-
-### 3. `lists` 只是选集容器，不是最终播放字符串
-总控层应记住：
-- `lists` 负责定位当前线路下的选集项
-- 每一集标题和链接默认由 `list_text` / `list_url` 提取
-- `lists` 支持 `#id` / `#idv`
-
-### 4. 默认先走二级最小化原则
-对大多数影视站，二级先保证以下最小可用项即可：
-- 标题
-- 描述/备注
-- 详情
-- 图片
-- 线路
-- 列表
-
-如果用户没要求，不要默认一开始就强行把年份、地区、演员、导演全部补满。
-
-
-### 5. 页面真实多集但 detail 只吐 1 集时，先查 `lists` 容器层级
-如果：
-- 详情页真实 DOM 已确认能抓到多集
-- `vod_play_from` 正常
-- 但 `vod_play_url` 在字典模式下只吐出 1 集
-
-不要第一反应就把二级切成 async。总控层应优先判断：
-1. `lists` 是否落在了适合引擎逐项消费的容器层级
-2. `#id` 是否只是线路容器替换定位，而不是被误解成控制单线路集数
-
-#### 已验证案例：咕咕番
-对于这类“一级异步接口 + 详情直出资源列表”的站点：
-- `lists: '.anthology-list-box:eq(#id) .anthology-list-play'` 可能仍只吐出 1 集
-- 改为：
-```js
-lists: '.anthology-list-box:eq(#id) .anthology-list-play li',
-list_text: 'a&&Text',
-list_url: 'a&&href'
-```
-后，可恢复多集输出
-
-#### 工作流动作
-- 先用 `debug_spider_rule(pdfa)` 分别验证 `ul / li / a` 三层能抓到多少项
-- 若页面上多集存在，优先尝试把 `lists` 从容器层下沉到 `li` 项层
-- 只有在字典容器层级已验证不成立时，才考虑切到 async 二级
-
----
-
-### A. 先查 `class_parse`
-如果首页 `class` 为空，而规则里明明写了 `class_name/class_url`，应优先检查模板是否残留 `class_parse` 覆盖了分类输出。
-
-#### 处理动作
-显式尝试：
-```js
-class_parse: ''
-```
-
----
-
-### B. 再查推荐 `double`
-如果首页真实存在推荐卡片节点，但 `home.list` 为空，应优先检查模板默认推荐是否按双层逻辑处理。
-
-#### 处理动作
-对于单层推荐站点，优先补：
-```js
-double: false
-```
-
----
-
-### C. 再查分类 `url`
-如果一级始终不通，不要只盯选择器。必须先验证分类 URL 是否是真实分类模板，而不是首页导航表层链接。
-
-#### 强约束
-必须用真实分类页和翻页结构验证：
-- 第 1 页
-- 第 2 页
-- `fyclass`
-- `fypage`
-
----
-
-### D. 最后再判断是否要手写一级
-如果：
-- `class_parse` 已处理
-- `double` 已处理
-- 真实分类 URL 已确认
-- 模板原生一级仍不通
-
-这时才进入“一级最小手写覆盖”或 `async function` 接管。
-
----
-
-### 一个关键原则
-**不要把模板问题、分类 URL 问题、评估器串联问题，误当成单纯的一级选择器问题。**
+**先尊重引擎设定，再要求更宽容的兼容。**
