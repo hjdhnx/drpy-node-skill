@@ -40,7 +40,7 @@ test_spider_interface(source_name, "play", play_url)       # 播放
 ```
 
 - **A. 规则本身不通** → 单接口 test 也失败
-- **B. 评估器没串起来** → 单接口通但 evaluate 不通
+- **B. 评估器没串起来** → 单接口通但 evaluate 不通（见下文「评估器失败分流」B类优先检查）
 - **C. 主要卡在播放链** → detail 正常但 play 异常
 
 ### 🛑 检查点 1：确认诊断结论
@@ -217,6 +217,17 @@ debug_spider_rule(url, '.anthology-list-box ul li a', pdfa)
 |---|---|---|
 | **A. 规则不通** | 单接口 test 也失败 | 修复规则本身 |
 | **B. 评估没串起来** | 单接口通，评估不通 | 检查首页 class / class_parse / double / url / searchUrl |
+
+### B 类分数速映
+`evaluate_spider_source` 各接口分数可快速映射到排查步骤：
+
+| 丢失分数段 | 指向问题 | 对应步骤 |
+|-----------|---------|---------|
+| 首页 20 分 + 一级 20 分同时丢失 | `class_parse` 未命中导致 class 为空 | Step 2-3 |
+| 仅首页 20 分丢失，一级正常 | `double` 配置不匹配 | Step 4 |
+| 仅搜索 10 分丢失 | `searchUrl` 错误或搜索页 DOM 独立 | Step 5 |
+| 二级 25 分丢失 | `detailUrl` 缺失或二级字段映射错误 | 见「二级 detail 规范」 |
+| 播放 25 分丢失 | lazy 逻辑异常 | 转 `drpy-node-play-debug` |
 
 ### B 类优先检查（顺序执行，逐项排查）
 ```
