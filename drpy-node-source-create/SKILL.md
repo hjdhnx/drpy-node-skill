@@ -27,11 +27,8 @@ description: 适用于 drpy-node 新建 DS 源。用户提到"新建源""写个 
 **工具调用：`guess_spider_template(url)`**
 
 - 命中模板（返回 mx/mxpro/首图 等） → 走路线 A
-- 不命中 + 页面源码几乎为空（body 只有 SPA 容器 `<div id="app">`） → 走路线 C
-- 不命中 + 页面有筛选控件/header/footer 但列表区域无直出内容 → 先用 `fetch_spider_url` 检查是否存在 `/api/` 接口：
-  - 找到 JSON API → 走路线 C（纯 API 站）
-  - 无 JSON API + 数据由带签名接口驱动 → 走路线 B
-- 不命中 + 有完整 HTML 列表 DOM → 走路线 B（手动分析接口）
+- 不命中 + 页面源码为空（SPA 容器） → 走路线 C
+- 不命中 + 有 HTML 但数据由接口驱动 → 走路线 B
 
 **辅助判断：`analyze_website_structure(url)` 抓取精简 DOM 结构**
 **辅助判断：`fetch_spider_url(url)` 查看原始响应和 headers**
