@@ -143,10 +143,6 @@ description: 适用于 drpy-node 新建 DS 源。用户提到"新建源""写个 
 ### 核心：全 async 函数模式
 不要尝试模板继承，不要写规则字符串，直接用全 async 函数。
 
-**关于 detail 的决策分界**：纯 API 站的 detail 数据来自 JSON API，应直接上 async 函数解析 JSON 字段。不要尝试用二级字典映射 JSON 响应——字典模式是为 HTML DOM 结构设计的。判断依据：detail 页面返回 `Content-Type: application/json` → 用 async；返回 HTML → 可尝试字典模式。
-
-**关于 filter 筛选**：纯 API 站的筛选参数通常由 API 的 query 参数控制，不依赖页面 DOM 中的下拉框。直接查看 API 文档或从浏览器 Network 面板抓取筛选参数，手动构造 `filter_url` 和 `filter_def`。不适用 `extract_website_filter`（该工具面向 DOM 解析的 CMS 站）。
-
 ### 必背要点
 1. `this.input` 是渲染后的 URL 字符串 → 必须 `await request(this.input)` 拿响应
 2. 纯数字 vod_id 必须设 `detailUrl` → 如 `detailUrl: '/api/videos/fyid'`
