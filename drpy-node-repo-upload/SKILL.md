@@ -130,8 +130,18 @@ A/B/C 档判断应有充分的验证依据。验证标准详见 `references/refe
 - 用户说“别乱打标签” → 只保留明确要求的标签
 
 ### 发现标签错了怎么办
-- 立即 `update_tags`
+- 先用 `house_file(list)` 按文件名搜索定位仓库文件，获取 file_id
+- 再用 `house_file(action='info', file_id=...)` 确认当前标签
+- 然后 `house_file(action='update_tags', file_id=..., tags='...')` 修正
 - 回报最终标签
+
+### 独立标签修正流程（不经过上传）
+当用户仅要求改标签不上传时：
+1. `house_verify` 验证仓库连通性
+2. `house_file(list)` 搜索定位文件（源名不明确时）
+3. 确认当前 tags
+4. 执行 `update_tags`
+5. 按「标签修正模板」回报结果
 
 ### 自动标签检测
 
@@ -203,6 +213,17 @@ house_file(action='upload', auto_replace=true)
 
 ---
 
+## 快速入口选择
+
+根据用户意图选择入口：
+
+| 用户意图 | 入口流程 |
+|---------|---------|
+| 上传/替换源 | 走 Step 1 → Step 6 完整流程 |
+| 只检查不传 | 走 Step 1(校验) → Step 3 → 输出结论 → 终止（不进入 Step 4 上传） |
+| 只改标签 | 走 house_verify → house_file(list) 定位 → update_tags → 回报 |
+| 切换公开/私密 | 走 house_verify → house_file(list) 定位 → toggle_visibility → 回报 |
+
 ## 标准流程
 
 ### Step 1：确认源文件 + 验证仓库连接
@@ -236,6 +257,10 @@ house_file(action='upload', auto_replace=true)
 - **可以上传**
 - **暂不建议上传**
 
+根据用户意图分支：
+- 用户目标是"只评估不传"或"修好再传"且当前为 B/C 档 → 输出结论后终止，不进入 Step 4
+- 用户目标是立即上传且当前为 A/B 档 → 继续 Step 4
+
 ### Step 4：执行上传
 优先：
 ```text
@@ -256,11 +281,11 @@ house_file(action='upload', auto_replace=true)
 house_file(action='update_tags')
 ```
 
-### 🛑 检查点：确认上传结果
-上传完成后向用户呈现：
+### 🛑 检查点：确认操作结果
+上传/标签修正完成后向用户呈现：
 - 文件名、file_id、CID、tags
 - 是否公开
-- 新上传还是替换上传
+- 操作类型（新上传 / 替换上传 / 标签修正）
 - 用户确认后可继续修标签或结束
 
 ---
