@@ -177,6 +177,12 @@ house_file(action='upload', auto_replace=true)
 3. 确认最终文件名后再继续
 4. 不要假设唯一匹配而跳过二次确认
 
+### 仓库文件不明确
+用户说”仓库里这个文件”但不提供 file_id：
+1. 先用 `house_file(list)` 按文件名关键词搜索仓库文件
+2. 获取匹配文件的 file_id 后再执行 update_tags / toggle_visibility 等操作
+3. 不要混淆 `list_sources()`（本地文件）和 `house_file(list)`（仓库文件）
+
 ### house_verify 失败
 仓库连接无法建立时：
 1. 检查 `manage_config(get)` 确认 `HOUSE_TOKEN` 和 `HOUSER_URL` 配置
@@ -248,14 +254,19 @@ house_file(action='update_tags')
 
 ## 推荐输出模板
 
+### 上传结论模板
 ```markdown
 ## 上传前结论
 - 语法：通过 / 未通过
 - 结构：通过 / 未通过
 - 关键接口：...
-- 是否建议上传：是 / 否
+- 档位判断：A（建议上传）/ B（技术上可传，不建议）/ C（暂不应上传）
+- 验证依据：L1(语法结构) / L2(单接口) / L3(全流程)
 - 原因：...
+```
 
+### 上传结果模板
+```markdown
 ## 上传结果
 - 文件名：...
 - 仓库 ID：...
@@ -263,6 +274,17 @@ house_file(action='update_tags')
 - 标签：...
 - 可见性：公开 / 私密
 - 上传类型：新上传 / 替换上传
+```
+
+### 标签修正模板
+```markdown
+## 标签修正结果
+- 文件名：...
+- 仓库 ID：...
+- CID：...
+- 旧标签：...
+- 新标签：...
+- 修正方式：update_tags
 ```
 
 ---
