@@ -1,6 +1,6 @@
 ---
 name: drpy-node-source-workflow
-description: 适用于 drpy-node 源开发、修复、调试、测试与仓库上传的总控工作流 Skill。用户提到"修源""调试 drpy 源""测试某个源""详情为空""播放不通""搜索异常""上传到仓库""修复 P0 源""评估源可用性""DS源开发""lazy 解析""上传 ds 源"时使用。优先用于 drpy-node 项目中的 DS 源，负责先评估、再分流到对应子 skill（播放调试/仓库上传/新建源），最后做结果汇总与上传决策。
+description: 适用于 drpy-node 源开发、修复、调试、测试与仓库上传的总控工作流。用户提到"修源""调试 drpy 源""测试某个源""详情为空""播放不通""搜索异常""上传到仓库""修复 P0 源""评估源可用性""DS源开发""lazy 解析""上传 ds 源""源不通""源无效""低分评估"时使用。优先用于 drpy-node 项目中的 DS 源，负责先评估、再分流到对应子 skill（播放调试/仓库上传/新建源），最后做结果汇总与上传决策。提供完整的分类排查路线（模板站/纯API站/签名接口站）和检查点确认机制。
 ---
 
 # drpy-node Source Workflow
@@ -45,9 +45,18 @@ test_spider_interface(source_name, "play", play_url)       # 播放
 
 ### 🛑 检查点 1：确认诊断结论
 在进入分流前，向用户呈现诊断摘要：
-- 各接口状态（通/不通）
-- 初步判断属于哪类失败（A/B/C）
-- 确认后再进入对应的修复路线
+
+```markdown
+## 诊断结论
+- 首页：通/不通
+- 一级（category）：通/不通
+- 二级（detail）：通/不通
+- 搜索：通/不通
+- 播放：通/不通
+- 失败类型：A（规则不通）/ B（评估串联）/ C（播放链）
+- 建议路线：...
+- 用户确认后再进入修复
+```
 
 ### Step 4：分流
 | 问题类型 | 分流目标 |
@@ -64,9 +73,15 @@ test_spider_interface(source_name, "play", play_url)       # 播放
 
 ### 🛑 检查点 2：确认操作方案
 在收束前向用户确认：
-- 修复结果摘要（哪些接口已通/仍不通）
-- 是否建议上传（A/B/C 档）
-- 用户确认后再执行上传/回滚等操作
+
+```markdown
+## 修复结果摘要
+- 已修复：...（接口和改动简述）
+- 仍未通：...
+- 建议上传：A（建议上传）/ B（技术上可传）/ C（暂不应上传）
+
+用户确认后再执行上传/回滚等操作
+```
 
 ### 强约束
 不要把 workflow 变成"所有事都自己做完"。它的价值在于：先评估 → 再分流 → 最后收束。
@@ -203,12 +218,15 @@ debug_spider_rule(url, '.anthology-list-box ul li a', pdfa)
 | **A. 规则不通** | 单接口 test 也失败 | 修复规则本身 |
 | **B. 评估没串起来** | 单接口通，评估不通 | 检查首页 class / class_parse / double / url / searchUrl |
 
-### B 类优先检查
-- 首页 `class` 是否为空
-- `class_parse` 是否覆盖（显式设 `class_parse: ''` 清除残留）
-- `double` 是否导致推荐为空（`double: false` 改为单层）
-- 分类 `url` / 搜索 `searchUrl` 是否真实
-- 手写 一级/搜索 是否反而扰乱模板内置链路
+### B 类优先检查（顺序执行，逐项排查）
+```
+Step 1. 查 get_resolved_rule(path) → 看模板继承后的 class_parse/double/url 是否被覆盖
+Step 2. 查首页 class 是否为空 → class_parse 是否命中（未命中 → 补 class_parse）
+Step 3. 查 class_parse 是否残留覆盖 → 显式设 class_parse: ''
+Step 4. 查 double 是否导致推荐为空 → 单层推荐优先 double: false
+Step 5. 查分类 url / 搜索 searchUrl 是否真实
+Step 6. 查手写 一级/搜索 是否反而扰乱模板内置链路（删除手写，先用模板内置）
+```
 
 ### B 类深层机制理解
 
