@@ -206,6 +206,8 @@ node cli.js house verify | house upload <path> --tags .. | house info <cid>
 3. **`test home` 无法用于验证 filters 内容**：filters 是 preview 的大头，截断后 grep 不可靠。替代姿势：vm 加载源文件直接检查 `rule.filter`（明文对象可直接读；gzip 串先解压），或跑 `evaluate` 看首页评分。
 4. **`debug-source.mjs` 不注入请求级 this 变量**（`MY_CATE`/`MY_PAGE`/`MY_FL` 桩里没有，只有 `requestHost`/`hostUrl`/`orId`）。适合调二级/lazy（依赖 input/orId）；**测一级筛选必失效**——源里 `this.MY_FL` 恒为 undefined，静默走默认分支。带筛选的一级测试一律用 `test category --ext`（base64）。
 5. **CLI 输出可能混 ANSI 清屏序列**（Windows Git Bash 实测 ESC`[H`2J 前缀），解析前先清洗（命令见「输出读取」）。
+6. **curl 直连服务端 `/api` 验证时必须带 `pwd`**：`.env` 配置了 `API_PWD` 时，无 pwd 请求返回 403 `{"error":"Forbidden: Invalid or missing pwd"}`——宽松解析（如 `j.list||[]`）会把 403 误判成「接口返回空列表」的假故障，白白排查半天（真实案例：误以为服务端引擎全挂，实际只是没带 pwd）。排查顺序：先确认鉴权（`grep API_PWD .env`），再怀疑数据。注意 `.env` 可能是 `KEY = value` **等号带空格**的写法，`grep ^KEY=` 匹配不上该行、`cut -d= -f2` 取出的值也带杂质，取值后务必 trim。带 pwd 后解析响应仍要先看 `error` 字段再读 `list`。
+7. **debug-source.mjs 的 request 桩不支持 POST**（固定 GET 形态）：源方法内用 `request(url, {method:'POST', body})` 调接口的（如腾讯 PageService/getMVLPage 系），debug-source 下静默拿不到数据返回空——不是源坏了。POST 型源方法用 CLI `test`/`evaluate`（真实引擎链路）验证。
 
 ## Reference 使用规则
 
