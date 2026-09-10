@@ -10,11 +10,13 @@ drpy-node 爬虫源的**建、修、测、放、传**全链路一体化 skill。
 ## 便携性说明（先读）
 
 - ✅ **无需 MCP**：所有能力内置在 `scripts/cli.js`，AI 直接 `node scripts/cli.js <命令>` 调用。
+- ⚠️ **cli.js 在 skill 自身目录**（`~/.zcode/skills/drpy-node-coder/scripts/cli.js`），**不在 drpy-node 仓库里**——drpy-node/scripts 下没有 cli.js。工作目录随意（CLI 通过 setup 记录的根定位找到 drpy-node），别 cd 错地方。
 - ✅ **零 npm 依赖**：无需 `npm install`。`localDsCore` 测试引擎 bundle（14M，全内联 cheerio/axios/drpyS/htmlParser）+ sqlite + 编码 wasm 自带于 `scripts/vendor/`。
 - ⚠️ **前置**：本机需有 `drpy-node` 项目（CLI 复用其 `req`/`pdfa`/`drpyS`/DS解密 **源码模块**——这些互相 import、非 bundle，搬不动；但 `localDsCore` 已内联进 `vendor/`，`test`/`evaluate` 不再依赖 `drpy-node-bundle` 目录）。
 - 首次使用：`cd scripts && node cli.js setup <drpy-node-绝对路径> && node cli.js doctor`。
 - 调用范式：`node scripts/cli.js [--root <drpy-node路径>] [--target <网关名>] <命令> [参数] [--flags]`。所有命令输出 JSON：成功 `{"ok":true,"data":...}`、失败 `{"ok":false,"error":...}`。
-- **输出读取**：少数命令（test/evaluate）首次加载测试引擎时 stdout 可能有一次初始化日志，**业务 JSON 始终是 stdout 最后一行**，按最后一行 `{` 解析。
+- **输出读取**：少数命令（test/evaluate）首次加载测试引擎时 stdout 可能有一次初始化日志，**业务 JSON 始终是 stdout 最后一行**，按最后一行 `{` 解析。Windows Git Bash 下输出里可能混入 ANSI 清屏序列（ESC`[H`2J），直接解析会失败，先 `| tr -d '\033' | grep -v '^\[H\[2J'` 清洗。
+- **`data_preview` 是截断文本**（约 3KB，尾部 `... (数据已截断，共 N 字符)`），截断点可能切开 JSON 字符串——**对 preview 做 `JSON.parse` 必炸**。结构化取值只用 `item_count` / `first_item`（同样截断至 500 字符）字段，或对整行输出 grep 关键词；要完整数据请换姿势（见下文「测试实战陷阱」）。
 
 ## 网关与远程执行（local / 远程 drpy-node 多网关）
 
@@ -185,12 +187,25 @@ node cli.js debug --rule 'a&&href' --mode pdfh --url <url>  # 规则调试(pdfa/
 node cli.js fs read <path> | fs write <path> --content ...  # 读写(.js自动DS解密; --target 远程)
 node cli.js fs edit <path> replace_text --search .. --replacement ..  # 编辑(JS语法校验)
 node cli.js syntax <path> | validate <path> | resolved <path>
-node cli.js test <src> <home|category|detail|search|play> [--class-id/--ids/--keyword/--play-url/--flag]
+node cli.js test <src> <home|category|detail|search|play> [--class-id/--ids/--keyword/--play-url/--flag --ext]
 node cli.js evaluate <src> [--keyword 斗罗大陆]              # 全流程评分(满分100; 远程打远端运行时)
 node cli.js house verify | house upload <path> --tags .. | house info <cid>
 ```
 
 参数约定：位置参数在前，flags 在后（`--flag value` / `--flag=value` / `--header k=v` 可重复）。大文本用 `--content-file` 或 stdin。
+
+## 测试实战陷阱（真实踩坑，先读再测）
+
+1. **`test category --ext` 必须 Base64 编码的 JSON，明文会静默失效**（最高频坑）。引擎对 `ext` 参数做 `JSON.parse(base64Decode(ext))`，明文 JSON 解析失败后**静默回退空筛选**——返回 `success:true` + 正常条数的**默认列表**，看起来一切正常，极易误判成「源的筛选坏了」。正确姿势与验证方法：
+   ```bash
+   B64=$(echo -n '{"itype":"1"}' | base64 -w0)
+   node cli.js test <src> category --class-id tv --ext "$B64"
+   ```
+   **验证筛选生效必须对比 `first_item` 是否随 ext 变化**（无筛选基线先跑一次），只看 `success`/`item_count` 会被静默失效骗过。
+2. **`data_preview`/`first_item` 是截断文本，禁止 `JSON.parse`**（见「输出读取」）。解析预览必炸；要结构化数据换姿势。
+3. **`test home` 无法用于验证 filters 内容**：filters 是 preview 的大头，截断后 grep 不可靠。替代姿势：vm 加载源文件直接检查 `rule.filter`（明文对象可直接读；gzip 串先解压），或跑 `evaluate` 看首页评分。
+4. **`debug-source.mjs` 不注入请求级 this 变量**（`MY_CATE`/`MY_PAGE`/`MY_FL` 桩里没有，只有 `requestHost`/`hostUrl`/`orId`）。适合调二级/lazy（依赖 input/orId）；**测一级筛选必失效**——源里 `this.MY_FL` 恒为 undefined，静默走默认分支。带筛选的一级测试一律用 `test category --ext`（base64）。
+5. **CLI 输出可能混 ANSI 清屏序列**（Windows Git Bash 实测 ESC`[H`2J 前缀），解析前先清洗（命令见「输出读取」）。
 
 ## Reference 使用规则
 

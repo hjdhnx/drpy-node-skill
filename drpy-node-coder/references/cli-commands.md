@@ -68,7 +68,10 @@ fetch/analyze/guess/debug/iframe/filter/house 永远本地/仓库侧，与网关
 | `test <source> <home\|category\|detail\|search\|play>` | `--class-id --ids --keyword --play-url --flag --ext`；detail 在 `vod_play_url` 为空时附 `play_url_diagnosis`(item_keys+hint) 定位根因 | test_spider_interface |
 | `evaluate <source>` | `--class-id --keyword --timeout`；全流程评分(首页20+一级20+二级25+播放25+搜索10=100)。搜索词缺省按源名后缀智能选取(漫画→海贼王/小说→修仙/短剧→离婚/音频→故事)；`--keyword ''` 跳过搜索 | evaluate_spider_source |
 
-> 首次调用 test/evaluate 会加载 localDsCore 测试引擎（约 2-5s），stdout 可能有一次初始化日志，**业务 JSON 始终是 stdout 最后一行**。
+> ⚠️ **`--ext` 必须 Base64 编码的 JSON**（引擎 `ext = JSON.parse(base64Decode(ext))`）。传明文 JSON（如 `--ext '{"itype":"1"}'`）不会报错，而是**静默回退空筛选、返回默认列表**——`success:true` + 条数正常，极易误判为源筛选坏了。正确姿势：`B64=$(echo -n '{"itype":"1"}' | base64 -w0)` 后 `--ext "$B64"`；生效与否必须对比 `first_item` 是否随 ext 变化，不能只看 success/item_count。
+> `data_preview`/`first_item` 是截断文本（约 3KB / 500 字符，截断点可能切开 JSON 字符串），**禁止对其 `JSON.parse`**；结构化取值只用 `item_count`/`first_item` 等独立字段或 grep 关键词。
+
+> 首次调用 test/evaluate 会加载 localDsCore 测试引擎（约 2-5s），stdout 可能有一次初始化日志，**业务 JSON 始终是 stdout 最后一行**。Windows Git Bash 下可能混入 ANSI 清屏序列（ESC`[H`2J），先 `| tr -d '\033' | grep -v '^\[H\[2J'` 清洗再取最后一行。
 
 ## 仓库 house（移植 houseTools；用全局 fetch 非 drpy req）
 | 命令 | flags | 对应 MCP |
