@@ -152,7 +152,11 @@ async function testCategory(ctx, sourceName, classId, ext) {
   const start = performance.now();
   try {
     const query = { ac: 'list', t: classId };
-    if (ext) query.ext = ext;
+    if (ext) {
+      // 引擎要求 ext 为 Base64 的 JSON；明文 JSON（以 { 开头）会被引擎静默解析失败回退空筛选，
+      // 返回不带筛选的默认列表——自动编码避免这种「假成功」。base64 字符集不含 {，此判断对合法 base64 输入无副作用。
+      query.ext = ext.trimStart().startsWith('{') ? Buffer.from(ext, 'utf8').toString('base64') : ext;
+    }
     const data = await callEngine(ctx, sourceName, query);
     const duration = Math.round(performance.now() - start);
     const hasList = data && Array.isArray(data.list) && data.list.length > 0;
